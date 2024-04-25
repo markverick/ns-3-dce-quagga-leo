@@ -48,6 +48,10 @@ def build_dce_examples(module):
     module.add_example(needed = ['core', 'internet', 'dce-quagga', 'point-to-point', 'internet-apps', 'applications', 'topology-read'],
                        target='bin/dce-quagga-ospfd-rocketfuel',
                        source=['example/dce-quagga-ospfd-rocketfuel.cc'])
+    
+    module.add_example(needed = ['core', 'internet', 'dce-quagga', 'point-to-point', 'internet-apps', 'applications', 'topology-read'],
+                       target='bin/dce-quagga-ospfd-leo',
+                       source=['example/dce-quagga-ospfd-leo.cc'])
 
 def build_dce_kernel_examples(module):
     module.add_example(needed = ['core', 'internet', 'dce-quagga', 'point-to-point'],
