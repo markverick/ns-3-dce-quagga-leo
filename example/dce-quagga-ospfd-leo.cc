@@ -75,23 +75,27 @@ std::pair<std::string, std::string> RawAddressHelper(int link_id) {
   return std::make_pair(ss1.str(), ss2.str());
 }
 
-void AssignIP(int ms, int link_id, NetDeviceContainer nd, bool enabled) {
+void AssignIP(int ms, int link_id, NetDeviceContainer nd, int* if_count, bool enabled) {
   // Assert size
   auto node1 = nd.Get(0)->GetNode();
   auto node2 = nd.Get(1)->GetNode();
-
-  AddAddress (node1, MilliSeconds (ms), "sim0", RawAddressHelper(link_id).first.c_str());
+  std::string if1 = "sim" + std::to_string(if_count[node1->GetId()]++);
+  std::string if2 = "sim" + std::to_string(if_count[node2->GetId()]++);
+  std::string cmd1 = "link set " + if1 +" up";
+  std::string cmd2 = "link set " + if2 +" up";
+  AddAddress (node1, MilliSeconds (ms), if1.c_str(), RawAddressHelper(link_id).first.c_str());
   if (enabled) {
     RunIp (node1, MilliSeconds (ms + 10), "link set lo up");
-    RunIp (node1, MilliSeconds (ms + 10), "link set sim0 up");
+    RunIp (node1, MilliSeconds (ms + 10), cmd1.c_str());
 
   }
-  AddAddress (node2, MilliSeconds (ms), "sim0", RawAddressHelper(link_id).second.c_str());
+  AddAddress (node2, MilliSeconds (ms), if2.c_str(), RawAddressHelper(link_id).second.c_str());
   if (enabled) {
     RunIp (node2, MilliSeconds (ms + 10), "link set lo up");
-    RunIp (node2, MilliSeconds (ms + 10), "link set sim0 up");
+    RunIp (node2, MilliSeconds (ms + 10), cmd2.c_str());
   }
   printf("Assigned addresses: %s %s\n", RawAddressHelper(link_id).first.c_str(), RawAddressHelper(link_id).second.c_str());
+  printf("Assigned addresses: %s %s\n", cmd1.c_str(), cmd2.c_str());
 }
 
 
@@ -114,8 +118,8 @@ int
 main (int argc, char *argv[])
 {
   //  LogComponentEnable ("quagga-ospfd-rocketfuel", LOG_LEVEL_INFO);
-  int row = 3;
-  int col = 3;
+  int row = 128;
+  int col = 1;
   CommandLine cmd;
   cmd.AddValue ("stopTime", "Time to stop(seconds)", stopTime);
   cmd.Parse (argc,argv);
@@ -132,6 +136,8 @@ main (int argc, char *argv[])
   // Set up topology
   NetDeviceContainer ndc[row * col * 2];
   PointToPointHelper p2p;
+  int if_count[row * col];
+  memset(if_count, 0, sizeof if_count);
   p2p.SetChannelAttribute ("Delay", StringValue ("2ms"));
   p2p.SetDeviceAttribute ("DataRate", StringValue ("5Mbps"));
 
@@ -161,7 +167,7 @@ main (int argc, char *argv[])
 
   // IP Configuration
   for (int i = 0; i < link_count; i++) {
-    AssignIP(100, i, ndc[i], true);
+    AssignIP(100, i, ndc[i], if_count, true);
   }
 
   // Install Quagga
