@@ -190,6 +190,10 @@ public:
     if (router_id != "") {
       os << " ospf router-id " << router_id << std::endl;
     }
+    // for (uint32_t i = 0; i < 4; i++) {
+    //   os << "interface sim" << i << std::endl;
+    //   os << "  ip ospf cost " << (1000 + i) << std::endl;
+    // }
     os << "!" << std::endl;
   }
   std::vector<uint32_t> *iflist;
@@ -1172,7 +1176,7 @@ QuaggaHelper::InstallPriv (Ptr<Node> node)
       process.AddArguments ("-f", ospf_conf->GetFilename ());
       process.AddArguments ("-i", "/usr/local/etc/ospfd.pid");
       apps.Add (process.Install (node));
-      apps.Get (1)->SetStartTime (Seconds (5.0 + 0.1 * node->GetId ()));
+      apps.Get (1)->SetStartTime (Seconds (5.0 + 0.001 * node->GetId ()));
       node->AddApplication (apps.Get (1));
     }
 

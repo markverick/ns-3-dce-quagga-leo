@@ -40,8 +40,24 @@ using namespace ns3;
 
 NS_LOG_COMPONENT_DEFINE ("quagga-ospfd-leo");
 
+static void
+SetRlimit ()
+{
+  int ret;
+  struct rlimit limit;
+  limit.rlim_cur = 100000;
+  limit.rlim_max = 100000;
+
+  ret = setrlimit (RLIMIT_NOFILE, &limit);
+  if (ret == -1)
+    {
+      perror ("setrlimit");
+    }
+  return;
+}
+
 // Parameters
-uint32_t stopTime = 120;
+uint32_t stopTime = 200;
 
 // Static functions for linux stack
 static void RunIp (Ptr<Node> node, Time at, std::string str)
@@ -52,6 +68,7 @@ static void RunIp (Ptr<Node> node, Time at, std::string str)
   process.SetStackSize (1 << 16);
   process.ResetArguments ();
   process.ParseArguments (str.c_str ());
+  // std::cout << "T = " << at.GetSeconds() << " " << str << std::endl;
   apps = process.Install (node);
   apps.Start (at);
 }
@@ -75,30 +92,44 @@ std::pair<std::string, std::string> RawAddressHelper(int link_id) {
   return std::make_pair(ss1.str(), ss2.str());
 }
 
-void AssignIP(int ms, int link_id, NetDeviceContainer nd, int* if_count, bool enabled) {
+void AssignIP(int ms, int link_id, NetDeviceContainer nd, bool enabled) {
   // Assert size
   auto node1 = nd.Get(0)->GetNode();
   auto node2 = nd.Get(1)->GetNode();
-  std::string if1 = "sim" + std::to_string(if_count[node1->GetId()]++);
-  std::string if2 = "sim" + std::to_string(if_count[node2->GetId()]++);
+  std::string if1 = "sim" + std::to_string(nd.Get(0)->GetIfIndex());
+  std::string if2 = "sim" + std::to_string(nd.Get(1)->GetIfIndex());
   std::string cmd1 = "link set " + if1 +" up";
   std::string cmd2 = "link set " + if2 +" up";
+
   AddAddress (node1, MilliSeconds (ms), if1.c_str(), RawAddressHelper(link_id).first.c_str());
   if (enabled) {
-    RunIp (node1, MilliSeconds (ms + 10), "link set lo up");
-    RunIp (node1, MilliSeconds (ms + 10), cmd1.c_str());
-
+    RunIp (node1, MilliSeconds (ms + 1), cmd1.c_str());
   }
   AddAddress (node2, MilliSeconds (ms), if2.c_str(), RawAddressHelper(link_id).second.c_str());
   if (enabled) {
-    RunIp (node2, MilliSeconds (ms + 10), "link set lo up");
-    RunIp (node2, MilliSeconds (ms + 10), cmd2.c_str());
+    RunIp (node2, MilliSeconds (ms + 1), cmd2.c_str());
   }
   printf("Assigned addresses: %s %s\n", RawAddressHelper(link_id).first.c_str(), RawAddressHelper(link_id).second.c_str());
-  printf("Assigned addresses: %s %s\n", cmd1.c_str(), cmd2.c_str());
+  printf("Assigned commands: %s %s\n", cmd1.c_str(), cmd2.c_str());
 }
 
+void LinkUp(int ms, Ptr<Node> node, int if_id) {
+  std::string ifn = "sim" + std::to_string(if_id);;
+  std::string cmd = "link set " + ifn + " up";
+  RunIp (node, MilliSeconds (ms), cmd.c_str());
+}
 
+void LinkDown(int ms, Ptr<Node> node, int if_id) {
+  std::string ifn = "sim" + std::to_string(if_id);
+  std::string cmd = "link set " + ifn + " down";
+  RunIp (node, MilliSeconds (ms), cmd.c_str());
+}
+
+void LinkDown(int ms, NetDeviceContainer ndc) {
+  if (ndc.GetN() < 2) return;
+  LinkDown(ms, ndc.Get(0)->GetNode(), ndc.Get(0)->GetIfIndex());
+  LinkDown(ms, ndc.Get(1)->GetNode(), ndc.Get(1)->GetIfIndex());
+}
 
 void PrintRouteAt(int t, Ptr<Node> node) {
   RunIp (node, MilliSeconds (t * 1000), "link show");
@@ -114,12 +145,16 @@ void PrintAllRouteAt(int t, NodeContainer nc) {
   }
 }
 
+void printTime(int t) {
+  printf("Time = %d s\n", t);
+}
 int
 main (int argc, char *argv[])
 {
+  // SetRlimit ();
   //  LogComponentEnable ("quagga-ospfd-rocketfuel", LOG_LEVEL_INFO);
-  int row = 128;
-  int col = 1;
+  int row = 4;
+  int col = 4;
   CommandLine cmd;
   cmd.AddValue ("stopTime", "Time to stop(seconds)", stopTime);
   cmd.Parse (argc,argv);
@@ -134,23 +169,27 @@ main (int argc, char *argv[])
   int link_count = 0;
 
   // Set up topology
-  NetDeviceContainer ndc[row * col * 2];
+  NetDeviceContainer ndc[row * col];
+  NetDeviceContainer ndr[row * col];
   PointToPointHelper p2p;
-  int if_count[row * col];
-  memset(if_count, 0, sizeof if_count);
+
   p2p.SetChannelAttribute ("Delay", StringValue ("2ms"));
   p2p.SetDeviceAttribute ("DataRate", StringValue ("5Mbps"));
-
+  
   for (i = 0; i < row; i++) {
     for (j = 0; j < col; j++) {
       int id = i * col + j;
       int id1 = i * col + (j+1)%col;
       int id2 = ((i+1)%row) * col + j;
       // printf("Node %d %d - %d\n",i, j, time);
-      ndc[link_count++].Add(p2p.Install (nodes.Get(id), nodes.Get(id1)));
-      ndc[link_count++].Add(p2p.Install (nodes.Get(id), nodes.Get(id2)));
-      //   AssignIP(1000, link_count++, nodes, id, id1, true);
-      //   AssignIP(1000, link_count++, nodes, id, id2, true);
+      ndc[id].Add(p2p.Install (nodes.Get(id), nodes.Get(id1)));
+      ndr[id].Add(p2p.Install (nodes.Get(id), nodes.Get(id2)));
+      // void AddISL(int ms, int link_id, int* if_count, Ptr<Node> n1, Ptr<Node> n2);
+      // AssignIP(10, link_count++, nodes.Get(id), nodes.Get(id1), if_count[id]++, if_count[id1]++, 10);
+      // Simulator::Schedule (Seconds(10), &AddLink, 11000, id, nodes.Get(id), nodes.Get(id1));
+      
+      // AssignIP(10, link_count++, nodes.Get(id), nodes.Get(id2), if_count[id]++, if_count[id2]++, 10);
+      // Simulator::Schedule (Seconds(100), &AddLink, 110000, id, nodes.Get(id), nodes.Get(id2));
       // Simulator::Schedule (Seconds(0), &AddISL, ipv4AddrHelper,
       //                     nodes, id, id2);
     }
@@ -162,26 +201,58 @@ main (int argc, char *argv[])
                                               EnumValue (0));
   processManager.SetNetworkStack ("ns3::LinuxSocketFdFactory",
                                   "Library", StringValue ("liblinux.so"));
+  
   QuaggaHelper quagga;
   processManager.Install (nodes);
 
   // IP Configuration
-  for (int i = 0; i < link_count; i++) {
-    AssignIP(100, i, ndc[i], if_count, true);
+  // Set up sim0-3
+  for (int i = 0; i < row * col; i++) {
+    RunIp (nodes.Get(i), MilliSeconds (10001), "link set lo up");
   }
+  for (int i = 0; i < row * col; i++) {
+    AssignIP(10000 + i * 4, i, ndc[i], true);
+  }
+  for (int i = 0; i < row * col; i++) {
+    AssignIP(10002 + i * 4, row * col + i, ndr[i], true);
+  }
+  LinkDown(100 * 1000, ndc[0]);
+  // LinkDown(100 * 1000, ndc[2]);
+  // LinkDown(100 * 1000, ndr[0]);
+  // LinkDown(100 * 1000, ndr[6]);
+  
+
 
   // Install Quagga
   quagga.EnableOspf (nodes, "10.0.0.0/8");
   quagga.Install (nodes);
+
+  // Install Application
+  // DceApplicationHelper dce;
+  // ApplicationContainer apps;
+  // dce.SetStackSize (1 << 20);
+
+  // dce.SetBinary ("udp-server");
+  // dce.ResetArguments ();
+  // apps = dce.Install (nodes.Get (1));
+  // apps.Start (Seconds (4.0));
+
+  // dce.SetBinary ("udp-client");
+  // dce.ResetArguments ();
+  // dce.AddArgument ("10.0.0.2");
+  // apps = dce.Install (nodes.Get (0));
+  // apps.Start (Seconds (4.5));
 
 
   // Enable pcap
   p2p.EnablePcapAll ("leo-linux-test");
 
   // Debug
-  PrintAllRouteAt(10, nodes);
-  PrintAllRouteAt(80, nodes);
-
+  for (int i = 10; i <= stopTime; i+=10) {
+    Simulator::Schedule(Seconds(i), &printTime, i);
+  }
+  // PrintAllRouteAt(10, nodes);
+  // PrintAllRouteAt(80, nodes);
   //
   // Step 9
   // Now It's ready to GO!
