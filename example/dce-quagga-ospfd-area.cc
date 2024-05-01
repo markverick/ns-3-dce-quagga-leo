@@ -58,6 +58,23 @@ SetRlimit ()
 
 // Parameters
 uint32_t stopTime = 200;
+int area_h = 2; // area row height
+int area_w = 2; // area col width
+int stripes_w = 1; // strip width
+int area_r = 2; // number of area row
+int area_c = 2; // number of area column
+
+int area_s = area_h * area_w; // area size
+int row = (area_h + stripes_w) * area_r; // total rows
+int col = (area_w + stripes_w) * area_c; // total cols
+
+int n_area = area_r * area_c;
+int n_nodes = row * col;
+int n_edge_intra = (area_s * 2) - (area_h + area_w);
+int n_edge_intra_total = n_edge_intra * n_area;
+int n_edge_border = (area_h + area_w) * 2;
+int n_edge_border_total = n_edge_border * n_area;
+int n_edge_inter_total = n_nodes * 2 - n_edge_intra_total - n_edge_border_total;
 
 // Static functions for linux stack
 static void RunIp (Ptr<Node> node, Time at, std::string str)
@@ -148,13 +165,29 @@ void PrintAllRouteAt(int t, NodeContainer nc) {
 void printTime(int t) {
   printf("Time = %d s\n", t);
 }
+
+int area_id(int id) {
+  int x = id / col;
+  int y = id % col;
+  int ax = x / (area_h + stripes_w);
+  int axr = x % (area_h + stripes_w);
+  int ay = y / (area_w + stripes_w);
+  int ayr = y % (area_w + stripes_w);
+  if (axr >= area_h || ayr >= area_w) {
+    return 0;
+  }
+  return ax * area_c + ay;
+}
+
 int
 main (int argc, char *argv[])
 {
   // SetRlimit ();
   //  LogComponentEnable ("quagga-ospfd-rocketfuel", LOG_LEVEL_INFO);
-  int row = 6;
-  int col = 6;
+
+
+  printf("%d %d %d / %d\n", n_edge_intra_total, n_edge_inter_total, n_edge_border_total, n_nodes * 2);
+
   CommandLine cmd;
   cmd.AddValue ("stopTime", "Time to stop(seconds)", stopTime);
   cmd.Parse (argc,argv);
@@ -169,31 +202,105 @@ main (int argc, char *argv[])
   int link_count = 0;
 
   // Set up topology
-  NetDeviceContainer ndc[row * col];
-  NetDeviceContainer ndr[row * col];
+  NetDeviceContainer nd_inter[n_edge_inter_total];
+  NetDeviceContainer nd_intra[n_edge_intra_total];
+  NetDeviceContainer nd_border[n_edge_border_total];
   PointToPointHelper p2p;
+
+  int link_inter = 0;
+  int link_intra = 0;
+  int link_border = 0;
 
   p2p.SetChannelAttribute ("Delay", StringValue ("2ms"));
   p2p.SetDeviceAttribute ("DataRate", StringValue ("5Mbps"));
-  
-  for (i = 0; i < row; i++) {
-    for (j = 0; j < col; j++) {
-      int id = i * col + j;
-      int id1 = i * col + (j+1)%col;
-      int id2 = ((i+1)%row) * col + j;
-      // printf("Node %d %d - %d\n",i, j, time);
-      ndc[id].Add(p2p.Install (nodes.Get(id), nodes.Get(id1)));
-      ndr[id].Add(p2p.Install (nodes.Get(id), nodes.Get(id2)));
-      // void AddISL(int ms, int link_id, int* if_count, Ptr<Node> n1, Ptr<Node> n2);
-      // AssignIP(10, link_count++, nodes.Get(id), nodes.Get(id1), if_count[id]++, if_count[id1]++, 10);
-      // Simulator::Schedule (Seconds(10), &AddLink, 11000, id, nodes.Get(id), nodes.Get(id1));
-      
-      // AssignIP(10, link_count++, nodes.Get(id), nodes.Get(id2), if_count[id]++, if_count[id2]++, 10);
-      // Simulator::Schedule (Seconds(100), &AddLink, 110000, id, nodes.Get(id), nodes.Get(id2));
-      // Simulator::Schedule (Seconds(0), &AddISL, ipv4AddrHelper,
-      //                     nodes, id, id2);
+
+  // Intra Area Links
+  int id, id1, id2, x, y;
+  for (int ai = 0; ai < area_r; ai++) {
+    for (int aj = 0; aj < area_c; aj++) {
+      for (int i = 0; i < area_h; i++) {
+        for (int j = 0; j < area_w; j++) {
+          x = ai * (area_h + stripes_w) + i;
+          y = aj * (area_w + stripes_w) + j;
+          id = x * col + y;
+          id1 = (x+1) * col + y;
+          id2 = (x) * col + y + 1;
+          if (i + 1 < area_h) {
+            // printf("%d - %d\n", id, id1);
+            nd_intra[link_intra++].Add(p2p.Install (nodes.Get(id), nodes.Get(id1)));
+          }
+          if (j + 1 < area_w) {
+            // printf("%d - %d\n", id, id2);
+            nd_intra[link_intra++].Add(p2p.Install (nodes.Get(id), nodes.Get(id2)));
+          }
+          // nd_intra[link_intra++].Add(p2p.Install (nodes.Get(id), nodes.Get(id2)));
+        }
+      }
     }
   }
+
+  // Border Links
+  for (int ai = 0; ai < area_r; ai++) {
+    for (int aj = 0; aj < area_c; aj++) {
+      // p2p link  : (Inside, outside)
+      for (int k = 0; k < area_h; k++) {
+        // left border
+        x = ai * (area_h + stripes_w) + k;
+        y = aj * (area_w + stripes_w) + 0;
+        id = x * col + y;
+        id1 = x * col + (y + col - 1) % col;
+        // printf("%d - %d\n", id, id1);
+        nd_border[link_border++].Add(p2p.Install (nodes.Get(id), nodes.Get(id1)));
+
+        // right border
+        x = ai * (area_h + stripes_w) + k;
+        y = aj * (area_w + stripes_w) + area_w - 1;
+        id = x * col + y;
+        id1 = x * col + (y + 1) % col;
+        // printf("%d - %d\n", id, id1);
+        nd_border[link_border++].Add(p2p.Install (nodes.Get(id), nodes.Get(id1)));
+      }
+      for (int k = 0; k < area_w; k++) {
+        // top border
+        x = ai * (area_h + stripes_w) + 0;
+        y = aj * (area_w + stripes_w) + k;
+        id = x * col + y;
+        id1 = ((x + row - 1) % row) * col + y;
+        // printf("%d - %d\n", id, id1);
+        nd_border[link_border++].Add(p2p.Install (nodes.Get(id), nodes.Get(id1)));
+
+        // bottom border
+        x = ai * (area_h + stripes_w) + area_h - 1;
+        y = aj * (area_w + stripes_w) + k;
+        id = x * col + y;
+        id1 = ((x + 1) % row) * col + y;
+        // printf("%d - %d\n", id, id1);
+        nd_border[link_border++].Add(p2p.Install (nodes.Get(id), nodes.Get(id1)));
+      }
+    }
+  }
+
+  for (int i = 0; i < )
+
+
+  // for (i = 0; i < row; i++) {
+  //   for (j = 0; j < col; j++) {
+  //     int id = i * col + j;
+  //     int id1 = i * col + (j+1)%col;
+  //     int id2 = ((i+1)%row) * col + j;
+  //     // printf("Node %d %d - %d\n",i, j, time);
+  //     ndc[id].Add(p2p.Install (nodes.Get(id), nodes.Get(id1)));
+  //     ndr[id].Add(p2p.Install (nodes.Get(id), nodes.Get(id2)));
+  //     // void AddISL(int ms, int link_id, int* if_count, Ptr<Node> n1, Ptr<Node> n2);
+  //     // AssignIP(10, link_count++, nodes.Get(id), nodes.Get(id1), if_count[id]++, if_count[id1]++, 10);
+  //     // Simulator::Schedule (Seconds(10), &AddLink, 11000, id, nodes.Get(id), nodes.Get(id1));
+      
+  //     // AssignIP(10, link_count++, nodes.Get(id), nodes.Get(id2), if_count[id]++, if_count[id2]++, 10);
+  //     // Simulator::Schedule (Seconds(100), &AddLink, 110000, id, nodes.Get(id), nodes.Get(id2));
+  //     // Simulator::Schedule (Seconds(0), &AddISL, ipv4AddrHelper,
+  //     //                     nodes, id, id2);
+  //   }
+  // }
 
   // Internet stack installation
   DceManagerHelper processManager;
@@ -207,16 +314,16 @@ main (int argc, char *argv[])
 
   // IP Configuration
   // Set up sim0-3
-  for (int i = 0; i < row * col; i++) {
-    RunIp (nodes.Get(i), MilliSeconds (10001), "link set lo up");
-  }
-  for (int i = 0; i < row * col; i++) {
-    AssignIP(10000 + i * 4, i, ndc[i], true);
-  }
-  for (int i = 0; i < row * col; i++) {
-    AssignIP(10002 + i * 4, row * col + i, ndr[i], true);
-  }
-  LinkDown(100 * 1000, ndc[0]);
+  // for (int i = 0; i < row * col; i++) {
+  //   RunIp (nodes.Get(i), MilliSeconds (10001), "link set lo up");
+  // }
+  // for (int i = 0; i < row * col; i++) {
+  //   AssignIP(10000 + i * 4, i, ndc[i], true);
+  // }
+  // for (int i = 0; i < row * col; i++) {
+  //   AssignIP(10002 + i * 4, row * col + i, ndr[i], true);
+  // }
+  // LinkDown(100 * 1000, ndc[0]);
   // LinkDown(100 * 1000, ndc[2]);
   // LinkDown(100 * 1000, ndr[0]);
   // LinkDown(100 * 1000, ndr[6]);
