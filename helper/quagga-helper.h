@@ -89,6 +89,17 @@ public:
   void EnableOspf (NodeContainer nodes, const char *network);
 
   /**
+   * \brief Enable the ospfd daemon to the nodes with given area.
+   *
+   * \param nodes The node(s) to enable OSPFv2 (quagga ospfd).
+   * \param network The network to enable ospf protocol.
+   * \param area The area in ospf protocol.
+   */
+  void EnableOspfArea (NodeContainer nodes, const char *network, int area);
+
+  void SetArea(NodeContainer nodes, const char *network, int area);
+
+  /**
    * \brief Set router-id param of OSPF to the node.
    *
    * \param node The node to set router-id of OSPF instance.

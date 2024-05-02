@@ -216,7 +216,7 @@ main (int argc, char *argv[])
   for (int i = 0; i < row * col; i++) {
     AssignIP(10002 + i * 4, row * col + i, ndr[i], true);
   }
-  LinkDown(100 * 1000, ndc[0]);
+  LinkDown(135 * 1000, ndc[0]);
   // LinkDown(100 * 1000, ndc[2]);
   // LinkDown(100 * 1000, ndr[0]);
   // LinkDown(100 * 1000, ndr[6]);

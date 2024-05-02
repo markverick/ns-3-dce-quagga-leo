@@ -55,7 +55,8 @@ def build_dce_examples(module):
 
     module.add_example(needed = ['core', 'internet', 'dce-quagga', 'point-to-point', 'internet-apps', 'applications', 'topology-read'],
                        target='bin/dce-quagga-ospfd-area',
-                       source=['example/dce-quagga-ospfd-area.cc'])
+                       source=['example/dce-quagga-ospfd-area.cc',
+                       ])
 
 def build_dce_kernel_examples(module):
     module.add_example(needed = ['core', 'internet', 'dce-quagga', 'point-to-point'],

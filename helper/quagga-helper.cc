@@ -104,17 +104,20 @@ class OspfConfig : public Object
 private:
   std::string router_id;
   std::map<std::string, uint32_t> *networks;
+  std::pair<int, std::string> *area_range;
 public:
   OspfConfig ()
     : m_ospfdebug (false)
   {
     networks = new std::map<std::string, uint32_t> ();
     iflist = new std::vector<uint32_t> ();
+    area_range = new std::pair<int, std::string> (-1, "");
   }
   ~OspfConfig ()
   {
     delete networks;
     delete iflist;
+    delete area_range;
   }
 
   bool m_ospfdebug;
@@ -138,6 +141,12 @@ public:
   addNetwork (std::string prefix, uint32_t area)
   {
     networks->insert (std::map<std::string, uint32_t>::value_type (prefix, area));
+  }
+
+  void
+  setArea (std::string prefix, uint32_t area)
+  {
+    *area_range = std::make_pair(area, prefix);
   }
 
   void
@@ -186,6 +195,9 @@ public:
       {
         os << "  network " << (*i).first << " area " << (*i).second << std::endl;
       }
+    if (area_range->first != -1) {
+      os << "  area " << area_range->first << " range " << area_range->second << std::endl;
+    }
     os << " redistribute connected" << std::endl;
     if (router_id != "") {
       os << " ospf router-id " << router_id << std::endl;
@@ -656,6 +668,38 @@ QuaggaHelper::EnableOspf (NodeContainer nodes, const char *network)
         }
 
       ospf_conf->addNetwork (std::string (network), 0);
+    }
+  return;
+}
+
+void
+QuaggaHelper::EnableOspfArea (NodeContainer nodes, const char *network, int area)
+{
+  for (uint32_t i = 0; i < nodes.GetN (); i++)
+    {
+      Ptr<OspfConfig> ospf_conf = nodes.Get (i)->GetObject<OspfConfig> ();
+      if (!ospf_conf)
+        {
+          ospf_conf = new OspfConfig ();
+          nodes.Get (i)->AggregateObject (ospf_conf);
+        }
+      ospf_conf->addNetwork (std::string (network), area);
+    }
+  return;
+}
+
+void
+QuaggaHelper::SetArea (NodeContainer nodes, const char *network, int area)
+{
+  for (uint32_t i = 0; i < nodes.GetN (); i++)
+    {
+      Ptr<OspfConfig> ospf_conf = nodes.Get (i)->GetObject<OspfConfig> ();
+      if (!ospf_conf)
+        {
+          ospf_conf = new OspfConfig ();
+          nodes.Get (i)->AggregateObject (ospf_conf);
+        }
+      ospf_conf->setArea (std::string (network), area);
     }
   return;
 }

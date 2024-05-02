@@ -38,7 +38,7 @@
 #endif
 using namespace ns3;
 
-NS_LOG_COMPONENT_DEFINE ("quagga-ospfd-leo");
+NS_LOG_COMPONENT_DEFINE ("quagga-ospfd-area");
 
 static void
 SetRlimit ()
@@ -76,6 +76,20 @@ int n_edge_border = (area_h + area_w) * 2;
 int n_edge_border_total = n_edge_border * n_area;
 int n_edge_inter_total = n_nodes * 2 - n_edge_intra_total - n_edge_border_total;
 
+// Return area id
+int AreaId(int id) {
+  int x = id / col;
+  int y = id % col;
+  int ax = x / (area_h + stripes_w);
+  int axr = x % (area_h + stripes_w);
+  int ay = y / (area_w + stripes_w);
+  int ayr = y % (area_w + stripes_w);
+  if (axr >= area_h || ayr >= area_w) {
+    return 0;
+  }
+  return 1 + ax * area_c + ay;
+}
+
 // Static functions for linux stack
 static void RunIp (Ptr<Node> node, Time at, std::string str)
 {
@@ -109,6 +123,18 @@ std::pair<std::string, std::string> RawAddressHelper(int link_id) {
   return std::make_pair(ss1.str(), ss2.str());
 }
 
+// Genereate a pair of address of 10.<area>.0.0/30 by link id
+std::pair<std::string, std::string> AreaAddressHelper(int area, int link_id) {
+  int base_ip = link_id * 4;
+  std::stringstream ss1; // 10.area.0.1/30
+  std::stringstream ss2; // 10.area.0.2/30
+  base_ip++;
+  ss1 << "10." << area << "." << (base_ip / 256) % 256 << "." << base_ip % 256 << "/30";
+  base_ip++;
+  ss2 << "10." << area << "." << (base_ip / 256) % 256 << "." << base_ip % 256 << "/30";
+  return std::make_pair(ss1.str(), ss2.str());
+}
+
 void AssignIP(int ms, int link_id, NetDeviceContainer nd, bool enabled) {
   // Assert size
   auto node1 = nd.Get(0)->GetNode();
@@ -127,6 +153,36 @@ void AssignIP(int ms, int link_id, NetDeviceContainer nd, bool enabled) {
     RunIp (node2, MilliSeconds (ms + 1), cmd2.c_str());
   }
   printf("Assigned addresses: %s %s\n", RawAddressHelper(link_id).first.c_str(), RawAddressHelper(link_id).second.c_str());
+  printf("Assigned commands: %s %s\n", cmd1.c_str(), cmd2.c_str());
+}
+
+void AssignIPArea(int ms, int link_id, NetDeviceContainer nd, bool enabled) {
+  // Assert size
+  auto node1 = nd.Get(0)->GetNode();
+  auto node2 = nd.Get(1)->GetNode();
+  std::string if1 = "sim" + std::to_string(nd.Get(0)->GetIfIndex());
+  std::string if2 = "sim" + std::to_string(nd.Get(1)->GetIfIndex());
+  std::string cmd1 = "link set " + if1 +" up";
+  std::string cmd2 = "link set " + if2 +" up";
+
+  // Set area if both nodes are not backbone
+  /*
+    The OSPF backbone always contains all area border routers.
+  */
+  int area = 0;
+  if (AreaId(node1->GetId()) && AreaId(node2->GetId())) {
+    area = AreaId(node1->GetId()); // both nodes should have same id
+    printf("! %d\n", area);
+  }
+  AddAddress (node1, MilliSeconds (ms), if1.c_str(), AreaAddressHelper(area, link_id).first.c_str());
+  if (enabled) {
+    RunIp (node1, MilliSeconds (ms + 1), cmd1.c_str());
+  }
+  AddAddress (node2, MilliSeconds (ms), if2.c_str(), AreaAddressHelper(area, link_id).second.c_str());
+  if (enabled) {
+    RunIp (node2, MilliSeconds (ms + 1), cmd2.c_str());
+  }
+  printf("Assigned addresses: %s %s\n", AreaAddressHelper(area, link_id).first.c_str(), AreaAddressHelper(AreaId(node2->GetId()), link_id).second.c_str());
   printf("Assigned commands: %s %s\n", cmd1.c_str(), cmd2.c_str());
 }
 
@@ -166,19 +222,6 @@ void printTime(int t) {
   printf("Time = %d s\n", t);
 }
 
-int area_id(int id) {
-  int x = id / col;
-  int y = id % col;
-  int ax = x / (area_h + stripes_w);
-  int axr = x % (area_h + stripes_w);
-  int ay = y / (area_w + stripes_w);
-  int ayr = y % (area_w + stripes_w);
-  if (axr >= area_h || ayr >= area_w) {
-    return 0;
-  }
-  return ax * area_c + ay;
-}
-
 int
 main (int argc, char *argv[])
 {
@@ -214,94 +257,47 @@ main (int argc, char *argv[])
   p2p.SetChannelAttribute ("Delay", StringValue ("2ms"));
   p2p.SetDeviceAttribute ("DataRate", StringValue ("5Mbps"));
 
-  // Intra Area Links
-  int id, id1, id2, x, y;
-  for (int ai = 0; ai < area_r; ai++) {
-    for (int aj = 0; aj < area_c; aj++) {
-      for (int i = 0; i < area_h; i++) {
-        for (int j = 0; j < area_w; j++) {
-          x = ai * (area_h + stripes_w) + i;
-          y = aj * (area_w + stripes_w) + j;
-          id = x * col + y;
-          id1 = (x+1) * col + y;
-          id2 = (x) * col + y + 1;
-          if (i + 1 < area_h) {
-            // printf("%d - %d\n", id, id1);
-            nd_intra[link_intra++].Add(p2p.Install (nodes.Get(id), nodes.Get(id1)));
-          }
-          if (j + 1 < area_w) {
-            // printf("%d - %d\n", id, id2);
-            nd_intra[link_intra++].Add(p2p.Install (nodes.Get(id), nodes.Get(id2)));
-          }
-          // nd_intra[link_intra++].Add(p2p.Install (nodes.Get(id), nodes.Get(id2)));
-        }
+  for (i = 0; i < row; i++) {
+    for (j = 0; j < col; j++) {
+      int id = i * col + j;
+      int id1 = i * col + (j+1)%col;
+      int id2 = ((i+1)%row) * col + j;
+      printf("Node %d - %d %d\n",id, id1, id2);
+      if (AreaId(id) && AreaId(id1)) {
+        // Intra-area
+        nd_intra[link_intra++].Add(p2p.Install (nodes.Get(id), nodes.Get(id1)));
+      } else if(AreaId(id) && !AreaId(id1)) {
+        // Border-area (in, out)
+        nd_border[link_border++].Add(p2p.Install (nodes.Get(id), nodes.Get(id1)));
+      } else if(!AreaId(id) && AreaId(id1)) {
+        // Border-area (in, out)
+        nd_border[link_border++].Add(p2p.Install (nodes.Get(id1), nodes.Get(id)));
+      } else {
+        // Inter-area
+        nd_inter[link_inter++].Add(p2p.Install (nodes.Get(id), nodes.Get(id1)));
+      }
+      if (AreaId(id) && AreaId(id2)) {
+        // Intra-area
+        nd_intra[link_intra++].Add(p2p.Install (nodes.Get(id), nodes.Get(id2)));
+      } else if(AreaId(id) && !AreaId(id2)) {
+        // Border-area (in, out)
+        nd_border[link_border++].Add(p2p.Install (nodes.Get(id), nodes.Get(id2)));
+      } else if(!AreaId(id) && AreaId(id2)) {
+        // Border-area (in, out)
+        nd_border[link_border++].Add(p2p.Install (nodes.Get(id2), nodes.Get(id)));
+      } else {
+        // Inter-area
+        nd_inter[link_inter++].Add(p2p.Install (nodes.Get(id), nodes.Get(id2)));
       }
     }
   }
+  NS_ASSERT_MSG(link_intra == n_edge_intra_total, "intra link number does not match");
+  NS_ASSERT_MSG(link_inter == n_edge_inter_total, "inter link number does not match");
+  NS_ASSERT_MSG(link_border == n_edge_border_total, "border link number does not match");
 
-  // Border Links
-  for (int ai = 0; ai < area_r; ai++) {
-    for (int aj = 0; aj < area_c; aj++) {
-      // p2p link  : (Inside, outside)
-      for (int k = 0; k < area_h; k++) {
-        // left border
-        x = ai * (area_h + stripes_w) + k;
-        y = aj * (area_w + stripes_w) + 0;
-        id = x * col + y;
-        id1 = x * col + (y + col - 1) % col;
-        // printf("%d - %d\n", id, id1);
-        nd_border[link_border++].Add(p2p.Install (nodes.Get(id), nodes.Get(id1)));
-
-        // right border
-        x = ai * (area_h + stripes_w) + k;
-        y = aj * (area_w + stripes_w) + area_w - 1;
-        id = x * col + y;
-        id1 = x * col + (y + 1) % col;
-        // printf("%d - %d\n", id, id1);
-        nd_border[link_border++].Add(p2p.Install (nodes.Get(id), nodes.Get(id1)));
-      }
-      for (int k = 0; k < area_w; k++) {
-        // top border
-        x = ai * (area_h + stripes_w) + 0;
-        y = aj * (area_w + stripes_w) + k;
-        id = x * col + y;
-        id1 = ((x + row - 1) % row) * col + y;
-        // printf("%d - %d\n", id, id1);
-        nd_border[link_border++].Add(p2p.Install (nodes.Get(id), nodes.Get(id1)));
-
-        // bottom border
-        x = ai * (area_h + stripes_w) + area_h - 1;
-        y = aj * (area_w + stripes_w) + k;
-        id = x * col + y;
-        id1 = ((x + 1) % row) * col + y;
-        // printf("%d - %d\n", id, id1);
-        nd_border[link_border++].Add(p2p.Install (nodes.Get(id), nodes.Get(id1)));
-      }
-    }
-  }
-
-  for (int i = 0; i < )
-
-
-  // for (i = 0; i < row; i++) {
-  //   for (j = 0; j < col; j++) {
-  //     int id = i * col + j;
-  //     int id1 = i * col + (j+1)%col;
-  //     int id2 = ((i+1)%row) * col + j;
-  //     // printf("Node %d %d - %d\n",i, j, time);
-  //     ndc[id].Add(p2p.Install (nodes.Get(id), nodes.Get(id1)));
-  //     ndr[id].Add(p2p.Install (nodes.Get(id), nodes.Get(id2)));
-  //     // void AddISL(int ms, int link_id, int* if_count, Ptr<Node> n1, Ptr<Node> n2);
-  //     // AssignIP(10, link_count++, nodes.Get(id), nodes.Get(id1), if_count[id]++, if_count[id1]++, 10);
-  //     // Simulator::Schedule (Seconds(10), &AddLink, 11000, id, nodes.Get(id), nodes.Get(id1));
-      
-  //     // AssignIP(10, link_count++, nodes.Get(id), nodes.Get(id2), if_count[id]++, if_count[id2]++, 10);
-  //     // Simulator::Schedule (Seconds(100), &AddLink, 110000, id, nodes.Get(id), nodes.Get(id2));
-  //     // Simulator::Schedule (Seconds(0), &AddISL, ipv4AddrHelper,
-  //     //                     nodes, id, id2);
-  //   }
-  // }
-
+  printf("Intra: %d\n", link_intra);
+  printf("Inter: %d\n", link_inter);
+  printf("Border: %d\n", link_border);
   // Internet stack installation
   DceManagerHelper processManager;
   processManager.SetTaskManagerAttribute ("FiberManagerType",
@@ -313,7 +309,22 @@ main (int argc, char *argv[])
   processManager.Install (nodes);
 
   // IP Configuration
-  // Set up sim0-3
+  // Set up loop backs
+  for (int i = 0; i < row * col; i++) {
+    RunIp (nodes.Get(i), MilliSeconds (10001), "link set lo up");
+  }
+
+  // Set up area 0 as 10.0.0.0/16 each link is /30
+  for (int i = 0; i < link_intra; i++) {
+    AssignIPArea(10000 + i * 4, i, nd_intra[i], true);
+  }
+  for (int i = 0; i < link_inter; i++) {
+    AssignIPArea(10000 + i * 4, i, nd_inter[i], true);
+  }
+  for (int i = 0; i < link_border; i++) {
+    AssignIPArea(10000 + i * 4, link_inter + i, nd_border[i], true);
+  }
+
   // for (int i = 0; i < row * col; i++) {
   //   RunIp (nodes.Get(i), MilliSeconds (10001), "link set lo up");
   // }
@@ -323,7 +334,7 @@ main (int argc, char *argv[])
   // for (int i = 0; i < row * col; i++) {
   //   AssignIP(10002 + i * 4, row * col + i, ndr[i], true);
   // }
-  // LinkDown(100 * 1000, ndc[0]);
+  LinkDown(135 * 1000, nd_inter[0]);
   // LinkDown(100 * 1000, ndc[2]);
   // LinkDown(100 * 1000, ndr[0]);
   // LinkDown(100 * 1000, ndr[6]);
@@ -331,7 +342,15 @@ main (int argc, char *argv[])
 
 
   // Install Quagga
-  quagga.EnableOspf (nodes, "10.0.0.0/8");
+  for (int j = 0; j < n_area + 1; j++) {
+    std::string str = "10." + std::to_string(j) + ".0.0/16";
+    quagga.EnableOspfArea (nodes, str.c_str(), j);
+  }
+  for (int i = 0; i < n_nodes; i++) {
+    int area = AreaId(i);
+    std::string str = "10." + std::to_string(area) + ".0.0/16";
+    quagga.SetArea(nodes.Get(i), str.c_str(), area);
+  }
   quagga.Install (nodes);
 
   // Install Application
